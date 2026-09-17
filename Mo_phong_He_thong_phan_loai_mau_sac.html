@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mô phỏng hệ thống phân loại sản phẩm theo màu sắc — ESP32 + TCS3200</title>
+<style>
+  :root{
+    --steel-dark:#2b2f38;
+    --steel-mid:#454b58;
+    --steel-light:#9aa3b2;
+    --floor:#dde3ea;
+    --hmi-bg:#0f1620;
+    --hmi-panel:#16202c;
+    --hmi-line:#25323f;
+    --amber:#f5a524;
+    --term-green:#5ee38c;
+    --red:#e6473c;
+    --red-dark:#a7291f;
+    --green:#28b26a;
+    --green-dark:#177a48;
+    --blue:#2f7de1;
+    --blue-dark:#1c53a3;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:'Segoe UI','DejaVu Sans',system-ui,sans-serif;
+    background:
+      radial-gradient(circle at 15% 10%, #eef2f6 0%, var(--floor) 55%);
+    color:#1c2430;
+    min-height:100vh;
+    padding:22px;
+  }
+
+  .app{
+    max-width:1360px;
+    margin:0 auto;
+  }
+
+  .topbar{
+    display:flex;
+    align-items:flex-end;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:10px;
+    margin-bottom:16px;
+    padding-bottom:14px;
+    border-bottom:2px solid #c7cfd9;
+  }
+  .topbar h1{
+    font-size:21px;
+    margin:0 0 4px 0;
+    letter-spacing:0.2px;
+    color:#111827;
+  }
+  .topbar p{
+    margin:0;
+    font-size:12.5px;
+    color:#5b6675;
+  }
+  .chip-row{ display:flex; gap:8px; flex-wrap:wrap; }
+  .chip{
+    font-size:10.5px;
+    font-weight:700;
+    letter-spacing:0.4px;
+    padding:5px 10px;
+    border-radius:20px;
+    background:#e8edf3;
+    color:#3a4453;
+    border:1px solid #cdd6e0;
+  }
+
+  .layout{
+    display:grid;
+    grid-template-columns: 1fr 320px;
+    gap:18px;
+  }
+  @media (max-width: 980px){
+    .layout{ grid-template-columns: 1fr; }
+  }
+
+  /* ============ FACTORY SCENE ============ */
+  .factory-wrap{
+    background:linear-gradient(180deg,#f3f6f9 0%, #e4e9ef 100%);
+    border:1px solid #c7cfd9;
+    border-radius:14px;
+    padding:20px 20px 14px 20px;
+    box-shadow:0 10px 30px -18px rgba(20,30,45,0.35);
+  }
+
+  .factory-floor{
+    position:relative;
+    height:430px;
+    background-image:
+      linear-gradient(90deg, rgba(0,0,0,0.035) 1px, transparent 1px),
+      linear-gradient(0deg, rgba(0,0,0,0.035) 1px, transparent 1px);
+    background-size:24px 24px;
+    border-radius:10px;
+    overflow:hidden;
+  }
+
+  /* legs */
+  .leg{
+    position:absolute; top:150px; width:14px; height:70px;
+    background:linear-gradient(90deg,#c3cad4,#8b93a1 45%,#c3cad4);
+    border:1px solid #7c8494; border-radius:2px;
+  }
+
+  /* conveyor */
+  .conveyor{
+    position:absolute; left:4%; right:4%; top:150px; height:70px;
+    background:var(--steel-dark);
+    border-radius:8px;
+    box-shadow: inset 0 3px 0 #454b58, inset 0 -4px 8px rgba(0,0,0,0.45), 0 6px 14px rgba(0,0,0,0.25);
+    overflow:hidden;
+  }
+  .belt-track{
+    position:absolute; inset:0;
+    background:repeating-linear-gradient(
+      115deg,
+      #343a45 0px, #343a45 14px,
+      #3c4350 14px, #3c4350 28px
+    );
+    background-size:200% 100%;
+    animation: beltMove 1.1s linear infinite;
+    animation-play-state:paused;
+    opacity:0.9;
+  }
+  .running .belt-track{ animation-play-state:running; }
+  @keyframes beltMove{ from{background-position:0 0;} to{background-position:-56px 0;} }
+
+  .belt-rail{
+    position:absolute; left:0; right:0; height:6px; background:#1b2027;
+  }
+  .belt-rail.top{ top:0; } .belt-rail.bottom{ bottom:0; }
+
+  #beltBoxes{
+    position:absolute; inset:0; pointer-events:none;
+  }
+  .prod-box{
+    position:absolute;
+    width:34px; height:34px;
+    border-radius:5px;
+    box-shadow:0 4px 6px rgba(0,0,0,0.3), inset 0 -6px 8px rgba(0,0,0,0.18), inset 0 4px 6px rgba(255,255,255,0.28);
+    z-index:5;
+  }
+  .prod-box.c-red{ background:linear-gradient(155deg,#ff6b5e,var(--red) 55%,var(--red-dark)); }
+  .prod-box.c-green{ background:linear-gradient(155deg,#5fe39c,var(--green) 55%,var(--green-dark)); }
+  .prod-box.c-blue{ background:linear-gradient(155deg,#6ea3ee,var(--blue) 55%,var(--blue-dark)); }
+  .prod-box.detected{ box-shadow:0 0 0 3px rgba(255,255,255,0.85), 0 4px 10px rgba(0,0,0,0.35); }
+
+  /* sensor module */
+  .sensor-module{
+    position:absolute; top:70px; left:34%;
+    display:flex; flex-direction:column; align-items:center;
+    z-index:6;
+  }
+  .sensor-body{
+    width:46px; height:52px;
+    background:linear-gradient(180deg,#1f2733,#111722);
+    border-radius:6px 6px 10px 10px;
+    border:1px solid #060a10;
+    display:flex; align-items:flex-end; justify-content:center;
+    padding-bottom:6px;
+    box-shadow:0 4px 8px rgba(0,0,0,0.3);
+  }
+  .lens{
+    width:16px; height:16px; border-radius:50%;
+    background:#1a1f27;
+    border:2px solid #384252;
+    box-shadow:inset 0 0 4px #000;
+    transition:box-shadow .18s ease, background .18s ease;
+  }
+  .lens.flash-red{ background:var(--red); box-shadow:0 0 16px 4px var(--red); }
+  .lens.flash-green{ background:var(--green); box-shadow:0 0 16px 4px var(--green); }
+  .lens.flash-blue{ background:var(--blue); box-shadow:0 0 16px 4px var(--blue); }
+  .sensor-beam{
+    position:absolute; bottom:-46px; left:50%; width:2px; height:44px;
+    background:#334; transform:translateX(-50%);
+    opacity:0.25;
+  }
+  .sensor-label{
+    margin-top:6px; font-size:9.5px; font-weight:700; letter-spacing:0.5px;
+    color:#4b5563; background:#fff; padding:2px 6px; border-radius:4px; border:1px solid #d7dce3;
+  }
+
+  /* flap / servo assembly */
+  .flap-assembly{
+    position:absolute; top:38px; left:78%;
+    display:flex; flex-direction:column; align-items:center; z-index:6;
+  }
+  .servo-body{
+    width:40px; height:22px; background:linear-gradient(180deg,#374151,#1f2733);
+    border-radius:4px; font-size:8px; color:#cbd5e1; font-weight:700;
+    display:flex; align-items:center; justify-content:center; letter-spacing:0.5px;
+    border:1px solid #0b0f14;
+  }
+  .flap-pivot{
+    width:8px; height:8px; border-radius:50%; background:#111722; margin-top:2px;
+    position:relative; z-index:2;
+  }
+  .flap-arm{
+    position:absolute; top:66px; left:50%;
+    width:6px; height:46px;
+    background:linear-gradient(90deg,#fb923c,var(--amber) 60%,#c2650b);
+    border-radius:3px;
+    transform-origin:top center;
+    transform:translateX(-50%) rotate(0deg);
+    transition:transform .32s cubic-bezier(.34,1.4,.64,1);
+    box-shadow:0 2px 4px rgba(0,0,0,0.3);
+    z-index:1;
+  }
+
+  /* chutes + bins */
+  .bins-row{
+    position:absolute; left:4%; right:4%; top:250px; bottom:14px;
+    display:flex; justify-content:space-between; gap:14px;
+  }
+  .bin-unit{ flex:1; display:flex; flex-direction:column; align-items:center; position:relative; }
+  .chute{
+    width:60%; height:34px;
+    clip-path:polygon(15% 0,85% 0,100% 100%,0% 100%);
+    margin-bottom:-2px;
+  }
+  .chute-red{ background:linear-gradient(180deg,#f3958c,var(--red)); }
+  .chute-green{ background:linear-gradient(180deg,#8fe6b7,var(--green)); }
+  .chute-blue{ background:linear-gradient(180deg,#9cc1f2,var(--blue)); }
+
+  .bin{
+    width:100%; height:108px; border-radius:6px 6px 10px 10px;
+    display:flex; flex-direction:column; align-items:center; justify-content:flex-end;
+    padding-bottom:8px;
+    position:relative; overflow:hidden;
+    box-shadow:inset 0 8px 14px rgba(0,0,0,0.28), 0 5px 10px rgba(0,0,0,0.18);
+  }
+  .bin-red{ background:linear-gradient(180deg,#c73f33,#8f251d); }
+  .bin-green{ background:linear-gradient(180deg,#1f9d5c,#116538); }
+  .bin-blue{ background:linear-gradient(180deg,#2467c9,#153f83); }
+  .bin-fill{
+    position:absolute; left:3px; right:3px; bottom:3px; height:0%;
+    background:rgba(255,255,255,0.18); border-radius:4px;
+    transition:height .35s ease;
+  }
+  .bin-count{
+    font-size:22px; font-weight:800; color:#fff; text-shadow:0 2px 3px rgba(0,0,0,0.35);
+    z-index:2;
+  }
+  .bin-label{
+    font-size:10px; font-weight:700; letter-spacing:1px; color:rgba(255,255,255,0.92);
+    z-index:2; margin-top:2px;
+  }
+
+  /* ============ HMI PANEL ============ */
+  .hmi{
+    background:var(--hmi-bg);
+    border-radius:14px;
+    border:1px solid #23303e;
+    padding:16px 16px 14px 16px;
+    display:flex; flex-direction:column;
+    box-shadow:0 10px 30px -18px rgba(0,0,0,0.6);
+  }
+  .hmi-title{
+    font-size:11px; font-weight:800; letter-spacing:1.6px; color:var(--amber);
+    margin-bottom:2px;
+  }
+  .hmi-sub{ font-size:10.5px; color:#5f7186; margin-bottom:14px; }
+
+  .btn-row{ display:flex; gap:8px; margin-bottom:10px; }
+  button{
+    font-family:inherit; cursor:pointer; border:none; border-radius:7px;
+    padding:9px 10px; font-size:12px; font-weight:700; letter-spacing:0.2px;
+    transition:transform .08s ease, filter .15s ease;
+  }
+  button:active{ transform:scale(0.96); }
+  .btn-primary{ background:linear-gradient(180deg,#3ecf76,#1f9d5c); color:#06210f; flex:1; }
+  .btn-secondary{ background:#1f2b3a; color:#cbd5e1; border:1px solid #2c3b4d; flex:1; }
+  .btn-danger{ background:#2a1a1a; color:#ff9d90; border:1px solid #4a2a26; flex:1; }
+  button:hover{ filter:brightness(1.12); }
+  button:disabled{ opacity:0.4; cursor:not-allowed; filter:none; }
+
+  .panel-block{
+    background:var(--hmi-panel); border:1px solid var(--hmi-line);
+    border-radius:9px; padding:11px 12px; margin-bottom:10px;
+  }
+  .panel-block .lbl{
+    font-size:10px; font-weight:700; color:#7c8ea3; letter-spacing:0.6px; margin-bottom:8px;
+    display:flex; justify-content:space-between;
+  }
+  .panel-block .lbl span.val{ color:var(--term-green); font-family:'Consolas','DejaVu Sans Mono',monospace; }
+
+  input[type=range]{
+    width:100%; accent-color:var(--amber); height:4px;
+  }
+
+  .spawn-grid{ display:flex; gap:6px; }
+  .spawn-btn{
+    flex:1; height:34px; border-radius:6px; border:1px solid rgba(255,255,255,0.15);
+    font-size:10.5px; font-weight:800; color:#fff;
+  }
+  .spawn-btn.r{ background:linear-gradient(180deg,#ff7a6d,var(--red)); }
+  .spawn-btn.g{ background:linear-gradient(180deg,#5fe39c,var(--green)); }
+  .spawn-btn.b{ background:linear-gradient(180deg,#6ea3ee,var(--blue)); }
+  .spawn-btn.x{ background:#374151; }
+
+  .log-panel{
+    background:#0a0f16; border:1px solid var(--hmi-line); border-radius:9px;
+    padding:10px 11px; flex:1; min-height:170px; max-height:260px; overflow-y:auto;
+    font-family:'Consolas','DejaVu Sans Mono',monospace; font-size:10.6px; line-height:1.6;
+    color:#8fb6a0;
+  }
+  .log-panel .lg-title{
+    font-size:9.5px; color:#4c5c70; letter-spacing:1px; margin-bottom:6px; font-family:inherit;
+  }
+  .log-line{ opacity:0; animation:fadeIn .25s ease forwards; }
+  @keyframes fadeIn{ to{opacity:1;} }
+  .log-line b{ color:var(--term-green); }
+  .log-line.tag-red b{ color:#ff8f83; }
+  .log-line.tag-green b{ color:#63e79c; }
+  .log-line.tag-blue b{ color:#7fb0f5; }
+  .log-line .ts{ color:#42556b; }
+
+  .footer-note{
+    margin-top:14px; text-align:center; font-size:10.5px; color:#8290a1;
+  }
+  .footer-note b{ color:#3a4453; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="topbar">
+    <div>
+      <h1>🏭 Mô phỏng hệ thống phân loại sản phẩm theo màu sắc</h1>
+      <p>Băng chuyền → Cảm biến màu TCS3200 → ESP32 xử lý → Servo gạt vào khay tương ứng</p>
+    </div>
+    <div class="chip-row">
+      <span class="chip">ESP32 DEVKIT V1</span>
+      <span class="chip">TCS3200</span>
+      <span class="chip">SERVO SG90</span>
+    </div>
+  </div>
+
+  <div class="layout">
+
+    <!-- ============ SCENE ============ -->
+    <div class="factory-wrap">
+      <div class="factory-floor" id="floor">
+
+        <div class="leg" style="left:8%"></div>
+        <div class="leg" style="left:88%"></div>
+
+        <div class="conveyor" id="conveyor">
+          <div class="belt-rail top"></div>
+          <div class="belt-track"></div>
+          <div class="belt-rail bottom"></div>
+        </div>
+
+        <div id="beltBoxes"></div>
+
+        <div class="sensor-module" style="left:34%;">
+          <div class="sensor-body"><div class="lens" id="lens"></div></div>
+          <div class="sensor-beam"></div>
+          <div class="sensor-label">CẢM BIẾN TCS3200</div>
+        </div>
+
+        <div class="flap-assembly" id="flapAssembly" style="left:78%;">
+          <div class="servo-body">SERVO</div>
+          <div class="flap-pivot"></div>
+          <div class="flap-arm" id="flapArm"></div>
+        </div>
+
+        <div class="bins-row">
+          <div class="bin-unit">
+            <div class="chute chute-red"></div>
+            <div class="bin bin-red"><div class="bin-fill" id="fillRed"></div><div class="bin-count" id="countRed">0</div><div class="bin-label">KHAY ĐỎ</div></div>
+          </div>
+          <div class="bin-unit">
+            <div class="chute chute-green"></div>
+            <div class="bin bin-green"><div class="bin-fill" id="fillGreen"></div><div class="bin-count" id="countGreen">0</div><div class="bin-label">KHAY XANH LÁ</div></div>
+          </div>
+          <div class="bin-unit">
+            <div class="chute chute-blue"></div>
+            <div class="bin bin-blue"><div class="bin-fill" id="fillBlue"></div><div class="bin-count" id="countBlue">0</div><div class="bin-label">KHAY XANH DƯƠNG</div></div>
+          </div>
+        </div>
+
+      </div>
+      <div class="footer-note">Sơ đồ tín hiệu: <b>Cảm biến → GPIO ESP32 → pulseIn() đọc R/G/B → so sánh & quyết định → Servo quay góc tương ứng</b></div>
+    </div>
+
+    <!-- ============ CONTROL PANEL ============ -->
+    <div class="hmi">
+      <div class="hmi-title">BẢNG ĐIỀU KHIỂN</div>
+      <div class="hmi-sub">Điều khiển mô phỏng &amp; theo dõi Serial Monitor ảo</div>
+
+      <div class="btn-row">
+        <button class="btn-primary" id="btnStart">▶ Chạy băng chuyền</button>
+        <button class="btn-secondary" id="btnPause" disabled>⏸ Tạm dừng</button>
+      </div>
+      <div class="btn-row">
+        <button class="btn-danger" id="btnReset">↺ Reset toàn bộ</button>
+      </div>
+
+      <div class="panel-block">
+        <div class="lbl">TỐC ĐỘ BĂNG CHUYỀN <span class="val" id="speedVal">Trung bình</span></div>
+        <input type="range" min="1" max="3" step="1" value="2" id="speedSlider">
+      </div>
+
+      <div class="panel-block">
+        <div class="lbl">THẢ SẢN PHẨM THỦ CÔNG</div>
+        <div class="spawn-grid">
+          <button class="spawn-btn r" data-color="red">ĐỎ</button>
+          <button class="spawn-btn g" data-color="green">XANH LÁ</button>
+          <button class="spawn-btn b" data-color="blue">XANH DƯƠNG</button>
+          <button class="spawn-btn x" data-color="random">?</button>
+        </div>
+      </div>
+
+      <div class="log-panel" id="logPanel">
+        <div class="lg-title">═══ SERIAL MONITOR (115200 baud) ═══</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function(){
+  const floor = document.getElementById('floor');
+  const conveyor = document.getElementById('conveyor');
+  const beltBoxes = document.getElementById('beltBoxes');
+  const lens = document.getElementById('lens');
+  const flapArm = document.getElementById('flapArm');
+  const logPanel = document.getElementById('logPanel');
+
+  const btnStart = document.getElementById('btnStart');
+  const btnPause = document.getElementById('btnPause');
+  const btnReset = document.getElementById('btnReset');
+  const speedSlider = document.getElementById('speedSlider');
+  const speedVal = document.getElementById('speedVal');
+
+  const counts = { red:0, green:0, blue:0 };
+  const countEls = { red:document.getElementById('countRed'), green:document.getElementById('countGreen'), blue:document.getElementById('countBlue') };
+  const fillEls  = { red:document.getElementById('fillRed'),  green:document.getElementById('fillGreen'),  blue:document.getElementById('fillBlue') };
+
+  const COLOR_META = {
+    red:   { label:'ĐỎ',        angle:-34, tag:'tag-red'   },
+    green: { label:'XANH LÁ',   angle:0,   tag:'tag-green' },
+    blue:  { label:'XANH DƯƠNG',angle:34,  tag:'tag-blue'  }
+  };
+
+  let running = false;
+  let spawnTimer = null;
+  let speedFactor = 2; // 1 slow, 2 medium, 3 fast
+  const SPEED_LABELS = {1:'Chậm', 2:'Trung bình', 3:'Nhanh'};
+
+  function log(html, tagClass){
+    const line = document.createElement('div');
+    line.className = 'log-line ' + (tagClass||'');
+    const t = new Date();
+    const ts = String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0')+':'+String(t.getSeconds()).padStart(2,'0');
+    line.innerHTML = '<span class="ts">['+ts+']</span> ' + html;
+    logPanel.appendChild(line);
+    logPanel.scrollTop = logPanel.scrollHeight;
+    while(logPanel.children.length > 60){ logPanel.removeChild(logPanel.children[1]); }
+  }
+
+  function randFreqFor(color){
+    // Gia lap gia tri pulseIn() -- kenh mau chiem uu the co "do rong xung" NHO hon (tan so cao hon)
+    function v(lo,hi){ return Math.floor(lo + Math.random()*(hi-lo)); }
+    if(color==='red')   return { r:v(10,35),  g:v(90,160), b:v(90,160) };
+    if(color==='green') return { r:v(90,160), g:v(10,35),  b:v(90,160) };
+    return                     { r:v(90,160), g:v(90,160), b:v(10,35) };
+  }
+
+  function pickRandomColor(){
+    const arr = ['red','green','blue'];
+    return arr[Math.floor(Math.random()*arr.length)];
+  }
+
+  function durForLeg(basePx){
+    // tra ve thoi gian (ms) ti le nghich voi speedFactor
+    const speedMulti = { 1:1.6, 2:1.0, 3:0.6 };
+    return basePx * speedMulti[speedFactor];
+  }
+
+  function spawnBox(forcedColor){
+    if(!running) return;
+    const color = forcedColor || pickRandomColor();
+    const box = document.createElement('div');
+    box.className = 'prod-box c-' + color;
+
+    const floorRect = floor.getBoundingClientRect();
+    const convRect = conveyor.getBoundingClientRect();
+    const beltY = (convRect.top - floorRect.top) + convRect.height/2 - 17;
+    const startX = (convRect.left - floorRect.left) - 40;
+    const sensorX = (convRect.left - floorRect.left) + convRect.width*0.34 - 17;
+    const edgeX = (convRect.left - floorRect.left) + convRect.width*0.78 - 17;
+
+    box.style.top = beltY + 'px';
+    box.style.left = startX + 'px';
+    beltBoxes.appendChild(box);
+
+    // ép reflow để transition áp dụng đúng
+    void box.offsetWidth;
+
+    box.style.transition = 'left ' + durForLeg(1400) + 'ms linear';
+    requestAnimationFrame(()=>{ box.style.left = sensorX + 'px'; });
+
+    box._removed = false;
+    const cleanupIfPaused = ()=>{ if(!running && box.parentNode){ } };
+
+    box.addEventListener('transitionend', function onLeg1(e){
+      if(e.propertyName !== 'left') return;
+      box.removeEventListener('transitionend', onLeg1);
+      if(!box.parentNode) return;
+
+      // ---- PHÁT HIỆN MÀU ----
+      const freq = randFreqFor(color);
+      const meta = COLOR_META[color];
+      lens.className = 'lens flash-' + color;
+      box.classList.add('detected');
+      log('R=<b>'+freq.r+'</b> &nbsp;G=<b>'+freq.g+'</b> &nbsp;B=<b>'+freq.b+'</b> &rarr; Nhận diện: <b>'+meta.label+'</b>', meta.tag);
+
+      setTimeout(()=>{
+        lens.className = 'lens';
+        if(!box.parentNode) return;
+        box.style.transition = 'left ' + durForLeg(900) + 'ms linear';
+        requestAnimationFrame(()=>{ box.style.left = edgeX + 'px'; });
+
+        box.addEventListener('transitionend', function onLeg2(e2){
+          if(e2.propertyName !== 'left') return;
+          box.removeEventListener('transitionend', onLeg2);
+          if(!box.parentNode) return;
+
+          // ---- SERVO QUAY GẠT ----
+          flapArm.style.transform = 'translateX(-50%) rotate(' + meta.angle + 'deg)';
+          log('Servo quay góc <b>'+meta.angle+'°</b> &rarr; đẩy sản phẩm vào <b>Khay '+meta.label+'</b>', meta.tag);
+
+          const binEl = document.querySelector('.bin-' + color);
+          const binRect = binEl.getBoundingClientRect();
+          const targetX = (binRect.left - floorRect.left) + binRect.width/2 - 17;
+          const targetY = (binRect.top - floorRect.top) + 14;
+
+          box.style.transition = 'left 420ms ease-in, top 420ms cubic-bezier(.5,-0.2,.9,.4), transform 420ms ease-in, opacity 420ms ease 260ms';
+          requestAnimationFrame(()=>{
+            box.style.left = targetX + 'px';
+            box.style.top = targetY + 'px';
+            box.style.transform = 'rotate(200deg) scale(0.7)';
+            box.style.opacity = '0';
+          });
+
+          setTimeout(()=>{
+            flapArm.style.transform = 'translateX(-50%) rotate(0deg)';
+          }, 500);
+
+          setTimeout(()=>{
+            if(box.parentNode) box.parentNode.removeChild(box);
+            counts[color]++;
+            countEls[color].textContent = counts[color];
+            fillEls[color].style.height = Math.min(100, counts[color]*8) + '%';
+          }, 480);
+        }, { once:true });
+      }, 480);
+    }, { once:true });
+  }
+
+  function scheduleSpawning(){
+    clearTimeout(spawnTimer);
+    if(!running) return;
+    const gap = { 1:2600, 2:1900, 3:1300 }[speedFactor];
+    spawnTimer = setTimeout(()=>{
+      spawnBox();
+      scheduleSpawning();
+    }, gap);
+  }
+
+  btnStart.addEventListener('click', ()=>{
+    if(running) return;
+    running = true;
+    floor.classList.add('running');
+    btnStart.disabled = true;
+    btnPause.disabled = false;
+    log('<b>--- Bắt đầu chạy băng chuyền ---</b>');
+    spawnBox();
+    scheduleSpawning();
+  });
+
+  btnPause.addEventListener('click', ()=>{
+    running = false;
+    floor.classList.remove('running');
+    btnStart.disabled = false;
+    btnPause.disabled = true;
+    clearTimeout(spawnTimer);
+    log('<b>--- Tạm dừng ---</b>');
+  });
+
+  btnReset.addEventListener('click', ()=>{
+    running = false;
+    floor.classList.remove('running');
+    btnStart.disabled = false;
+    btnPause.disabled = true;
+    clearTimeout(spawnTimer);
+    beltBoxes.innerHTML = '';
+    counts.red = counts.green = counts.blue = 0;
+    countEls.red.textContent = '0'; countEls.green.textContent = '0'; countEls.blue.textContent = '0';
+    fillEls.red.style.height = '0%'; fillEls.green.style.height = '0%'; fillEls.blue.style.height = '0%';
+    logPanel.innerHTML = '<div class="lg-title">═══ SERIAL MONITOR (115200 baud) ═══</div>';
+    log('Hệ thống đã được reset.');
+  });
+
+  speedSlider.addEventListener('input', (e)=>{
+    speedFactor = parseInt(e.target.value, 10);
+    speedVal.textContent = SPEED_LABELS[speedFactor];
+    if(running){ scheduleSpawning(); }
+  });
+
+  document.querySelectorAll('.spawn-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!running){
+        running = true;
+        floor.classList.add('running');
+        btnStart.disabled = true;
+        btnPause.disabled = false;
+        scheduleSpawning();
+      }
+      const c = btn.dataset.color;
+      spawnBox(c === 'random' ? null : c);
+    });
+  });
+
+  log('Sẵn sàng. Nhấn <b>"Chạy băng chuyền"</b> hoặc thả sản phẩm thủ công để bắt đầu mô phỏng.');
+})();
+</script>
+</body>
+</html>
